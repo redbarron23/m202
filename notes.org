@@ -1,0 +1,332 @@
+* Working Set
+- Portion of Data that is accessed most often
+1. indexes
+2. subset of data
+
+* How to figure out Working Set Size?
+- good knowledge of your data (and indexes)
+- average document size
+- average size of index bucket, key
+
+* Journaling impact on resident memory
+** Resident Memory as a Metric
+- Far higher than "working set potentially"
+- Far lower than "working set"
+1. Journaling ("durability of data")
+
+
+* Wired Tiger
+- Document level locking
+- compression
+- performance gains
+** Stores data in btrees
+** writes are initially seperate incorpoatdd later
+** two caches
+** FS cache
+** checkpoints
+
+* Process restarts, droping caches, 
+- mongod, mongos
+- no hard page faults => data still in memory
+hard -> data was read from disk
+soft -> data already in memory
+
+* invalidating cache
+root@m202-ubuntu1404:~# ls -al /proc/sys/vm/drop_caches
+-rw-r--r-- 1 root root 0 Aug 15 00:27 /proc/sys/vm/drop_caches
+
+** invalidate the cache with sysctl
+root@m202-ubuntu1404:~# sysctl -w vm.drop_caches=1
+vm.drop_caches = 1
+
+
+** force re-read of all pages into cache good for testing
+root@m202-ubuntu1404:~# sysctl -w vm.drop_caches=3
+
+
+* Disks
+- capped collections
+- Journal
+** seeks are expensive (try to use memory)
+
+** SSD
+- faster (no seeking)
+- variable performance 
+
+* RAID
+10
+1
+5
+
+
+* NFS doesn't play will with journaling
+
+
+* System level Tuning
+- NUMA
+set interleave policy, disable zone reclaim
+
+root@m202-ubuntu1404:~# cat /proc/sys/vm/zone_reclaim_mode
+0
+
+** MMS will alert u if enabled
+
+* Filesystem options
+mount options:
+noatime
+
+* SWAP
+** OOM killer Avoidance
+- To keep the kernel from killing MongoDB when running short on memory
+- o give you as an administrator greater control over how memory is used on a system running MongoDB
+
+* Readahead
+- The number of extra sectors to be read in for any disk access
+root@m202-ubuntu1404:~# blockdev  --report
+RO    RA   SSZ   BSZ   StartSec            Size   Device
+rw   256   512  4096          0      8589934592   /dev/sda
+rw   256   512  1024       2048       254803968   /dev/sda1
+rw   256   512  1024     501758            1024   /dev/sda2
+rw   256   512  4096     501760      8331984896   /dev/sda5
+rw   256   512  4096          0     21474836480   /dev/sdb
+rw   256   512  4096          0      8589934592   /dev/sdc
+rw   256   512  4096          0      6148849664   /dev/dm-0
+rw   256   512  4096          0      2143289344   /dev/dm-1
+rw   256   512  4096          0     30060576768   /dev/dm-2
+
+- RA = 256 => 256 X 512 byte sectors
+
+256 * 512
+131072
+
+128k Bytes
+
+- Good Locality  (Oplog, Capped Collections)
+- Seeks = Expensive 
+- adding ReadAhead data will evict other data
+- Prioryt for Memory efficiency
+- SSD use lower Readahead
+- How Low?  
+lowerbound 8K == 16 sectors
+upperbound 32k
+
+- readahead settings effect
+efficiency of your data storage in memory
+how often you access disk
+
+
+* Production Notes
+- don't use huge pages
+- Read them, read them often
+
+  
+* CPU 
+** User CPU
+* ** impact CPU
+- count, distinct, sorts  (this commands will chew thru CPU)
+- iteration are key
+- Clock Speed - quite important
+- Server side Javascript (including map reduce)
+- Intensive Aggregation Framework
+- Use V8 parallelishm  better than 2.4
+
+** System CPU
+- Scanning large Areas of Memory
+- new mongo versions changed from malloc() to tcmalloc() 
+- large memory sorts
+- should not be an issue but if system is > 30% check aforementioned
+
+** Summary
+- Generally CPU is not a primary scaling factor
+- MongoDB will use multiple core when possible
+- Some functions and Usage patterns are still CPU intensive
+faster == better in these cases
+
+
+* 
+* Disk Cpacity
+** pre-allocation (padding of data)
+- Data File
+- Journal
+- Oplog  (defaults 5% of free space)
+
+** Deletes, Moves
+docs will grow (i.e. data files grow)
+
+
+* Reclaiming Disk Space
+- compact commands
+withing the data file
+does not shrink/delete existing data files!
+
+
+* Monitoring, Strategies
+- MMS monitoring does not track free space
+- No warnings/errors until no space left
+
+
+* Segregration of Resources
+
+
+
+* Replication
+** max limits
+7 voting members
+12 total members
+
+* Going beyond 3 nodes
+Which of the following are common reasons some deployments have more than three replica set nodes?
+- node purely for analytics
+- node for backups
+- distribute a replica set across multiple data centers
+- less powerful node you do not want clients to access, but require for some other purpose
+
+
+* Distributed replication
+** eventual consistency
+delay
+replication is async
+it is chaining.  there are some roundtrips
+replica set secondaries sync by default from the nearest member
+
+
+*** example
+mongo --nodb
+var rst = new ReplSetTest({ name: 'testSet', nodes: 3});
+rst.startSet();
+rst.initiate();
+
+mongo --port 30000
+mongo --port 30001
+mongo --port 31002
+
+rs.syncFrom
+
+rs.syncFrom("myhostname.local:31000")
+
+
+cfg = rs.conf()
+cfg.settings = {}
+cfg.settings.chainingAllowed = false
+rs.reconfig(cfg)
+rs.conf()
+
+
+
+
+execution time release
+
+mongo compass
+
+uptime
+
+
+
+
+
+
+* rolling maintenace
+** building indexes to limit replication issues
+1. build on secondaries without replica then reconnect repl set
+2. background build on secondary
+
+1. cannot use a load balancer on a replica set
+isMaster() is not part of load balancer
+but cannot ascertain read prefernces
+
+2. can use load balancer with sharded cluster
+mongos sees the least connection
+issue getmore from LB  creates a cursor
+
+affinity or "stickiness" ensures source based connection
+will invalidate connection if target is no longer available aka mongos
+
+* DRIVER OPTIONS
+1. Generic  
+2. connection timeout
+  a. how bus it the server/cluster?
+  b. how quickly do you need to fail
+  c. throw exception or retry?
+3. connections per host
+  a. blocking multiplier
+there is a 20k limit on the number of connections to mongodb
+
+need to count # of mongoconnections per host
+1mb per connection  so 10k connections would be 10gb
+
+
+** socket timeout 
+defaults to infinite  (recommended settings)
+
+
+Driver Options
+HA => High AVailibility
+- in sharded set
+MongoClient("host1:27017, host2:27017.....)
+
+
+** max connections
+--maxConns = N
+
+limit connections to predict maxing out resources
+Formula for maximum mongos connections
+
+what are variables
+ulimits
+memory
+cap/20k
+
+- number of mongos process?(100 for example)
+- number of secondaries in a replica set? 
+- other connections 
+
+(maxPrimaryConnections - (numSecondaries x 3) - (numOthers x3)
+______________________________________________________________
+                        num Mongos
+
+
+The server has 10 GB of RAM, so that means that there is a maximum of 10,000 connections that it can handle:
+
+10,000 MB / (1 MB / connection ) = 10,000 connections
+
+Of that initial 10,000, we won't have access to all of them because:
+
+    It's part of a replica set with 2 secondaries (and we must allocate 3 connections per secondary)
+    It's got 6 "other" connections (to which we should allocate 3 connections each)
+
+To get the answer, we then compute as follows:
+
+( 10000 - ( 2 + 6 ) * 3 ) * 0.90 / 64 = 140.2875
+
+
+
+* Read preferences
+- availability
+- evantual consistency
+
+** default primary(only)
+
+** other options
+- primary preferred
+- secondary (only)
+- secondary preferred
+- nearest
+
+If you want to read from a secondary, you should set your read preference to either of:
+secondaryPreferred - In most situations, operations read from secondary members but if no secondary members are available, operations read from the primary.
+secondary - All operations read from the secondary members of the replica set.
+
+Reading from nearest as per your example will select the nearest member by ping time (which could be either the primary or a secondary).
+Caveats
+
+When using any read preference other than primary, you need to be aware of potential issues with eventual consistency that may affect your application logic. For example, if you are reading from a secondary there may be changes on the primary that have not replicated to that secondary yet.
+If you are concerned about stronger consistency when reading from secondaries you should review the Write Concern for Replica Sets documentation.
+Since secondaries have to write the same data as the primary, reading from secondaries may not improve performance unless your application is very read heavy or is fine with eventual consistency.
+
+
+* Rollbacks
+if > 300MB
+db.collection.timestamp.bson
+
+
+
